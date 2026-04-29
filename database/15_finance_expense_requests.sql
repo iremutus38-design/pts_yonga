@@ -49,6 +49,16 @@ CREATE TABLE finance.expense_requests (
 
     -- Onaylayan yönetici (UUID)
     approved_by UUID REFERENCES core.profiles(id),
+
+    -- !!! YENİ: Onaylanma tarihi.
+    -- PENDING -> APPROVED geçişinde trigger NOW() ile doldurur.
+    -- ADVANCE türü talepler için "+1 ay fatura yükleme son tarihi"
+    -- bu alana referans alınarak hesaplanır:
+    --     deadline = approved_at + INTERVAL '1 month'
+    -- (Hem trigger içinde bildirim mesajında, hem ileride zamanlanmış
+    -- görevlerde kullanılacak.)
+    approved_at TIMESTAMP WITH TIME ZONE,
+
     rejection_reason TEXT,
 
     -- Ödeme durumu (Muhasebe için)

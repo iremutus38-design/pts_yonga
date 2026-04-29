@@ -42,15 +42,47 @@ CREATE TABLE leave.leave_requests (
     approved_by UUID REFERENCES core.profiles(id),
     rejection_reason TEXT, -- Reddedilirse neden reddedildi?
 
+    -- ---- SICK (Rapor) İçin ----
+    -- Doktor raporunun yüklendiği dosya yolu 
+    medical_report_url TEXT,
+
+    -- ---- OVERTIME_COMP (Mesai İzin Hakkı) İçin ----
+    -- Mesainin yapıldığı tarih 
+    overtime_date DATE,
+
+    -- Yapılan mesai saati 
+    overtime_hours DECIMAL(4,2),
+
+    -- ---- DUAL APPROVAL (TL + Direktör birlikte onay) İçin ----
+    -- KURAL: SICK hariç TÜM izin tipleri (ANNUAL, CASUAL, UNPAID,
+    -- OVERTIME_COMP) ÇİFT onay ister: hem Takım Lideri HEM Direktör
+    -- onaylamadan status='APPROVED' olmaz.
+
+    tl_approved_at        TIMESTAMP WITH TIME ZONE,
+    tl_approved_by        UUID REFERENCES core.profiles(id),
+    director_approved_at  TIMESTAMP WITH TIME ZONE,
+    director_approved_by  UUID REFERENCES core.profiles(id),
+
+    -- ---- WARNING FLAGLERİ (uyarı bayrakları, engellemez) ----
+    --   * is_over_balance  -> talep edilen gün, kullanıcının kalan
+    --                         bakiyesini AŞIYORSA TRUE.
+    --   * is_under_tenure  -> kullanıcı hire_date itibariyle 6 aydan
+    --                         daha az süredir çalışıyorsa TRUE.
+    is_over_balance  BOOLEAN NOT NULL DEFAULT FALSE,
+    is_under_tenure  BOOLEAN NOT NULL DEFAULT FALSE,
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
     CONSTRAINT leave_dates_check CHECK (end_date >= start_date),
 
-    CONSTRAINT leave_total_days_check CHECK (total_days >= 0)
+    CONSTRAINT leave_total_days_check CHECK (total_days >= 0),
+
+    CONSTRAINT leave_overtime_hours_check CHECK (
+        overtime_hours IS NULL OR overtime_hours >= 0
+    )
 );
 
--- "İrem'in tüm izin geçmişi" tarzı sorgular seq scan yerine index scan kullansın diye.
 CREATE INDEX IF NOT EXISTS idx_leave_requests_profile ON leave.leave_requests(profile_id);
 
 CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON leave.leave_requests(status);
@@ -68,6 +100,8 @@ DROP POLICY IF EXISTS leave_requests_select_policy ON leave.leave_requests;
 DROP POLICY IF EXISTS leave_requests_insert_self ON leave.leave_requests;
 DROP POLICY IF EXISTS leave_requests_update_policy ON leave.leave_requests;
 DROP POLICY IF EXISTS leave_requests_delete_admin ON leave.leave_requests;
+-- !!! YENİ: HR + ADMIN birlikte silebilsin diye yeni adı da düşürüyoruz (idempotent rerun için)
+DROP POLICY IF EXISTS leave_requests_delete_hr_admin ON leave.leave_requests;
 
 -- ------------------------------------------------------------
 -- POLİTİKA TANIMLARI
@@ -78,7 +112,7 @@ DROP POLICY IF EXISTS leave_requests_delete_admin ON leave.leave_requests;
 CREATE POLICY leave_requests_select_policy ON leave.leave_requests
     FOR SELECT
     USING (
-        core.current_user_role() IN ('HR', 'ADMIN') 
+        core.current_user_role() IN ('HR', 'ADMIN')
         OR profile_id = (NULLIF(current_setting('app.current_user_id', TRUE), '')::UUID)
         OR (core.current_user_role() = 'TEAM_LEAD' AND profile_id IN (
             -- Kendi takımı
@@ -100,6 +134,7 @@ CREATE POLICY leave_requests_select_policy ON leave.leave_requests
             )
         ))
     );
+
 -- 2) EKLEME (INSERT)
 -- Sadece çalışan kendi adına talep oluşturabilir.
 CREATE POLICY leave_requests_insert_self ON leave.leave_requests
@@ -111,8 +146,11 @@ CREATE POLICY leave_requests_insert_self ON leave.leave_requests
 CREATE POLICY leave_requests_update_policy ON leave.leave_requests
     FOR UPDATE
     USING (
-        core.current_user_role() = 'ADMIN' 
-        OR 
+        core.current_user_role() = 'ADMIN'
+        OR
+        -- !!! YENİ: HR de güncelleyebilsin (iptal/düzeltme/durum değiştirme yetkisi).
+        core.current_user_role() = 'HR'
+        OR
         -- Takım Lideri kendi takımını veya vekalet aldığı takımı yönetir
         (core.current_user_role() = 'TEAM_LEAD' AND profile_id IN (
             SELECT id FROM core.profiles WHERE team_id = (SELECT team_id FROM core.profiles WHERE id = (NULLIF(current_setting('app.current_user_id', TRUE), '')::UUID))
@@ -125,18 +163,18 @@ CREATE POLICY leave_requests_update_policy ON leave.leave_requests
             -- VEKALET: TL izne çıktığında yetkisi buraya akar
             SELECT id FROM core.profiles WHERE team_id IN (
                 SELECT team_id FROM core.profiles WHERE id IN (
-                    SELECT grantor_id FROM core.user_delegations 
+                    SELECT grantor_id FROM core.user_delegations
                     WHERE grantee_id = (NULLIF(current_setting('app.current_user_id', TRUE), '')::UUID)
                     AND is_active = TRUE AND NOW() BETWEEN start_date AND end_date
+                    AND module IN ('LEAVE', 'ALL')
                 )
             )
         ))
         OR
         (profile_id = (NULLIF(current_setting('app.current_user_id', TRUE), '')::UUID) AND status = 'PENDING')
     );
-    -- 4) SİLME (DELETE)
-    -- Veritabanından satırı tamamen silme yetkisi SADECE ADMIN'dedir.
-    -- Diğer roller (İK dahil) asla satır silemez.
-    CREATE POLICY leave_requests_delete_admin ON leave.leave_requests
-        FOR DELETE
-        USING (core.current_user_role() = 'ADMIN');
+
+-- 4) SİLME (DELETE)
+CREATE POLICY leave_requests_delete_hr_admin ON leave.leave_requests
+    FOR DELETE
+    USING (core.current_user_role() IN ('HR', 'ADMIN'));

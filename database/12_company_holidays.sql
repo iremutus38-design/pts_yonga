@@ -11,7 +11,7 @@ CREATE TABLE core.company_holidays (
     holiday_date DATE NOT NULL UNIQUE,
     is_recurring BOOLEAN DEFAULT TRUE,
     description TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

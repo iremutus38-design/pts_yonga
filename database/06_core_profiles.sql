@@ -10,9 +10,6 @@ CREATE TABLE core.profiles (
     team_id UUID REFERENCES core.teams(id) ON DELETE SET NULL,
 
     -- Doğrudan rapor verdiği yönetici (recursive / self-referential).
-    -- En üst seviyede (CEO gibi) NULL olabilir.
-    -- ON DELETE SET NULL: Yönetici silinirse ast yetim kalmasın, NULL olsun;
-    -- yeni atama İK tarafından yapılır.
     manager_id UUID REFERENCES core.profiles(id) ON DELETE SET NULL,
 
     first_name VARCHAR(50) NOT NULL,
@@ -46,8 +43,6 @@ BEGIN
     SELECT id INTO v_loc_ankara_id   FROM core.locations   WHERE name      = 'Ankara YDA Center';
     SELECT id INTO v_dept_yazilim_id FROM core.departments WHERE name      = 'Yazılım Geliştirme Direktörlüğü';
 
-    -- Örnek: İrem Hanım işe başlarken 14 yerine 20 gün üzerinden anlaşmış olsun.
-    -- En üst yetkili (ADMIN) olduğu için manager_id = NULL.
     INSERT INTO core.profiles (
         first_name, last_name, role_id, location_id, department_id,
         title, contractual_leave_days, hire_date, manager_id
@@ -79,8 +74,8 @@ DROP POLICY IF EXISTS profiles_modify_hr_admin ON core.profiles;
 CREATE POLICY profiles_select_policy ON core.profiles
     FOR SELECT
     USING (
-        core.current_user_role() IN ('HR', 'ADMIN') 
-        OR 
+        core.current_user_role() IN ('HR', 'ADMIN')
+        OR
         id = (NULLIF(current_setting('app.current_user_id', TRUE), '')::UUID)
     );
 
@@ -88,7 +83,20 @@ CREATE POLICY profiles_select_policy ON core.profiles
 --    * Profil oluşturma (İşe alım), Silme (İşten çıkarma) ve Güncelleme (Terfi vb.)
 --    * SADECE HR ve ADMIN tarafından yapılabilir.
 CREATE POLICY profiles_modify_hr_admin ON core.profiles
-    FOR ALL 
+    FOR ALL
     TO public
     USING (core.current_user_role() IN ('HR', 'ADMIN'))
     WITH CHECK (core.current_user_role() IN ('HR', 'ADMIN'));
+
+
+ALTER TABLE core.departments
+    DROP CONSTRAINT IF EXISTS fk_departments_director; -- departments tablosundaki director ile ilgili eski foreign key’i kaldır
+ALTER TABLE core.departments
+    ADD CONSTRAINT fk_departments_director
+    FOREIGN KEY (director_id) REFERENCES core.profiles(id) ON DELETE SET NULL;
+
+ALTER TABLE core.teams
+    DROP CONSTRAINT IF EXISTS fk_teams_team_lead;
+ALTER TABLE core.teams
+    ADD CONSTRAINT fk_teams_team_lead
+    FOREIGN KEY (team_lead_id) REFERENCES core.profiles(id) ON DELETE SET NULL;

@@ -1,3 +1,5 @@
+-- 14_finance_expense_policies.sql
+
 -- 1. UUID ve Şema Hazırlığı
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE SCHEMA IF NOT EXISTS finance;
